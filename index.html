@@ -1,0 +1,201 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Improved Village Shop Tracker</title>
+<style>
+body { font-family: Arial,sans-serif; background: #f8faf8; margin:0; padding:0;}
+h1 { text-align:center; color:#1c77a7;}
+.container { max-width: 900px; margin: 2rem auto; background:#fff; padding: 2rem; border-radius: 10px; box-shadow:0 3px 12px #e0e5e8;}
+label { font-weight:bold; }
+input[type="text"], input[type="number"] { width: 100%; padding:0.5rem; margin:0.3rem 0; }
+button { background:#1c77a7; color:white; border:none;padding:0.6rem 1.2rem; font-size:1rem; border-radius:5px; cursor:pointer;}
+button:hover { background:#135274; }
+table { width:100%; border-collapse:collapse; margin-top:1rem;}
+th,td {border:1px solid #ccd; padding:0.5rem; text-align:center;}
+th {background:#dbebfa; color:#1c77a7;}
+.low-stock { font-weight:bold; color:#e74c3c;}
+.small {font-size:0.95rem; color:#888;}
+.action-btn {background:#eee;color:#1c77a7;cursor:pointer; border:none;padding:2px 8px; border-radius:3px;font-size:0.95em;}
+.action-btn:hover {background:#c8e4fa;}
+.export-link {margin-top:0.7rem; display:inline-block;background: #1c77a7; color:white; padding:0.5rem 1rem; border-radius:4px; text-decoration:none;}
+</style>
+</head>
+<body>
+<h1>Village Shop Inventory & Profit Tracker (Enhanced)</h1>
+<div class="container">
+  <form id="stock-form">
+    <label>Item Name:</label>
+    <input type="text" id="itemName" required>
+    <label>Acquired Price (₹ per unit):</label>
+    <input type="number" id="acPrice" min="0" required>
+    <label>Stock Added (units):</label>
+    <input type="number" id="stockAdded" min="1" required>
+    <button type="button" onclick="addStock()">Add Stock</button>
+  </form>
+  <hr>
+  <form id="sale-form">
+    <label>Sold Item Name:</label>
+    <input type="text" id="soldItemName" required>
+    <label>Selling Price (₹ per unit):</label>
+    <input type="number" id="sellPrice" min="0" required>
+    <label>Units Sold:</label>
+    <input type="number" id="soldUnits" min="1" required>
+    <button type="button" onclick="addSale()">Add Sale</button>
+  </form>
+  <hr>
+  <button type="button" onclick="resetSales()">Reset Today's Sales</button>
+  <a href="#" class="export-link" onclick="exportCSV()">Export As CSV</a>
+  <h2>Item Inventory & Sales (Today)</h2>
+  <table id="sales-table"></table>
+  <div class="summary" id="profit-summary"></div>
+  <div class="small">(Sales, profits, and stock are tracked per day. Remove sales or stock by clicking the delete buttons. Export your inventory and sales as CSV for records.)</div>
+</div>
+<script>
+function todayStr() { return new Date().toISOString().slice(0,10); }
+let stock = JSON.parse(localStorage.getItem('stock')) || {}; // {item: {acquiredPrice, stock}}
+let salesLog = JSON.parse(localStorage.getItem('salesLog')) || {}; // {date: {item: [{sellingPrice, qty}]}}
+let currentDay = todayStr();
+
+function saveAll() {
+  localStorage.setItem('stock', JSON.stringify(stock));
+  localStorage.setItem('salesLog', JSON.stringify(salesLog));
+}
+
+// Add stock (new or to existing item)
+function addStock() {
+  let item = document.getElementById('itemName').value.trim();
+  let acPrice = parseInt(document.getElementById('acPrice').value);
+  let qty = parseInt(document.getElementById('stockAdded').value);
+
+  if (!item || isNaN(acPrice) || isNaN(qty)) return;
+  if (!stock[item]) { stock[item] = { acquiredPrice: acPrice, stock: 0 }; }
+  stock[item].stock += qty;
+  stock[item].acquiredPrice = acPrice;
+  saveAll();
+  document.getElementById('stock-form').reset();
+  updateTable();
+}
+
+// Add sales, track per today
+function addSale() {
+  let item = document.getElementById('soldItemName').value.trim();
+  let sellPrice = parseInt(document.getElementById('sellPrice').value);
+  let qty = parseInt(document.getElementById('soldUnits').value);
+
+  if (!item || isNaN(sellPrice) || isNaN(qty)) return;
+  if (!stock[item] || stock[item].stock < qty)
+    return alert('Not enough stock for sale!');
+  if (!salesLog[currentDay]) salesLog[currentDay] = {};
+  if (!salesLog[currentDay][item]) salesLog[currentDay][item] = [];
+  salesLog[currentDay][item].push({sellingPrice: sellPrice, qty: qty});
+  stock[item].stock -= qty;
+  saveAll();
+  document.getElementById('sale-form').reset();
+  updateTable();
+}
+
+// Delete sales entry
+function deleteSale(item, idx) {
+  salesLog[currentDay][item][idx].deleted = true;
+  saveAll();
+  updateTable();
+}
+
+// Delete item stock
+function deleteStock(item) {
+  delete stock[item];
+  saveAll();
+  updateTable();
+}
+
+// Reset today's sales (does not remove overall inventory)
+function resetSales() {
+  if (confirm('Clear all sales for today?')) {
+    salesLog[currentDay] = {};
+    saveAll();
+    updateTable();
+  }
+}
+
+// Export as CSV
+function exportCSV() {
+  let lines = ["Item,Stock Left,Acquired Price,Sold Today,Selling Price,Profit"];
+  Object.keys(stock).forEach(item => {
+    let acPrice = stock[item].acquiredPrice;
+    let stockLeft = stock[item].stock;
+    let soldToday = 0;
+    let totalProfit = 0;
+    let lastSellPrice = "";
+    (salesLog[currentDay]?.[item] || []).forEach(s =>
+      {if(!s.deleted){
+        soldToday += s.qty;
+        totalProfit += (s.sellingPrice - acPrice) * s.qty;
+        lastSellPrice = s.sellingPrice;
+      }}
+    );
+    lines.push(`${item},${stockLeft},${acPrice},${soldToday},${lastSellPrice},${totalProfit}`);
+  });
+  let csv = lines.join("\n");
+  let a = document.createElement("a");
+  a.href = URL.createObjectURL(new Blob([csv],{type:"text/csv"}));
+  a.download = `shop-sales-${currentDay}.csv`;
+  a.click();
+}
+
+function updateTable() {
+  let html = `<tr>
+    <th>Item</th>
+    <th>Stock Left</th>
+    <th>Acquired Price (₹)</th>
+    <th>Sold Today</th>
+    <th>Selling Price (₹)</th>
+    <th>Total Profit (₹)</th>
+    <th>Est. Days Stock Left</th>
+    <th>Actions</th>
+  </tr>`;
+  let totalProfit = 0;
+  Object.keys(stock).forEach(item => {
+    let acPrice = stock[item].acquiredPrice;
+    let stockLeft = stock[item].stock;
+    let sales = salesLog[currentDay]?.[item] || [];
+    let soldToday = 0, profit = 0, sellPrice = "";
+    sales.forEach((s,i) => {
+      if(!s.deleted){
+        soldToday += s.qty;
+        profit += (s.sellingPrice - acPrice) * s.qty;
+        sellPrice = s.sellingPrice;
+      }
+    });
+    totalProfit += profit;
+    // Days stock left
+    let daysLeft = "--";
+    if(soldToday>0 && stockLeft>0) daysLeft=Math.max(1,Math.round(stockLeft/soldToday));
+    else if(stockLeft===0) daysLeft=0;
+    else if(soldToday===0 && stockLeft>0) daysLeft="No sale today";
+    html += `<tr>
+      <td>${item}</td>
+      <td${stockLeft<=5?' class="low-stock"':''}>${stockLeft}</td>
+      <td>₹${acPrice}</td>
+      <td>${soldToday}</td>
+      <td>${sellPrice?`₹${sellPrice}`:"--"}</td>
+      <td>₹${profit}</td>
+      <td>${daysLeft}</td>
+      <td>
+        <button class="action-btn" onclick="deleteStock('${item}')">Del Stock</button>
+        ${sales.filter(s=>!s.deleted).length>0?
+         sales.map((s,i)=>`<button class="action-btn" onclick="deleteSale('${item}',${i})">Del Sale ${i+1}</button>`).join(' ')
+         :""}
+      </td>
+    </tr>`;
+  });
+  document.getElementById('sales-table').innerHTML = html;
+  document.getElementById('profit-summary').innerHTML =
+    `Total Profit (Today): <span style="color:green;">₹${totalProfit}</span>`;
+}
+
+updateTable();
+</script>
+</body>
+</html>
